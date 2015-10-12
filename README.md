@@ -21,7 +21,7 @@ Kernel-based publish-subscribe system
 
 ## INSTALLATION:
     sudo apt-get install linux-headers-`uname -r`
-    git clone https://github.com/bob-linuxtoys/fanout
+    git clone --depth=1 https://github.com/bob-linuxtoys/fanout
     cd fanout
     make
     sudo make install
@@ -49,6 +49,8 @@ Kernel-based publish-subscribe system
 See http://linustoys.org for an article on fanout.
 
 See Linux Journal of August, 2010 for another article
+
+See also http://github.org/bob-linuxtoys/proxy
 
 
 
