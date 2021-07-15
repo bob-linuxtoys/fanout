@@ -1,14 +1,19 @@
 /*
  * fanout.c:  A one-to-many multiplexer
  *
- * Copyright (C) 2010-2015, Bob Smith
+ * Copyright (C) 2010-2021, Bob Smith, Frederic Roussel
  * This software is released under your choice of either
  * the GPLv2 or the 3-clause BSD license.
  * 
  * Initial release: Bob Smith
  * changes, added more locking: Edwin van den Oetelaar (www.oetelaar.com)
+ *          added automatic mknod: Frederic Roussel (fr.frasc@gmail.com)
  */
 
+/* Comment out to forgo the creation of /dev entries
+ * The companion udev rules 'fanout.rules' sets the special file mode
+ */
+#define DEV_MKNOD
 
 #include <linux/kernel.h>
 #include <linux/module.h>
@@ -18,11 +23,19 @@
 #include <linux/slab.h>
 #include <linux/sched.h>
 #include <asm/uaccess.h>
+#ifdef DEV_MKNOD
+#  include <linux/device.h>
+#  include <linux/device/class.h>
+#endif /* DEV_MKNOD */
 
 
 /* Limits and other defines */
 /* The # fanout devices.  Max minor # is one less than this */
-#define NUM_FO_DEVS (255)
+#ifdef DEV_MKNOD
+#  define NUM_FO_DEVS (8)
+#else
+#  define NUM_FO_DEVS (255)
+#endif /* DEV_MKNOD */
 #define DEVNAME "fanout"
 #define DEBUGLEVEL (2)
 
@@ -37,6 +50,9 @@ struct fo {
 	loff_t count;		/* number chars received */
 	wait_queue_head_t inq;	/* readers wait on this queue */
 	struct semaphore sem;	/* lock to keep buf/indx sane */
+#ifdef DEV_MKNOD
+	struct device *dev;	/* automatic mknod */
+#endif /* DEV_MKNOD */
 };
 
 
@@ -51,14 +67,14 @@ static unsigned int fanout_poll(struct file *, poll_table *);
 
 
 /* Global variables */
-static int buffersize = 0x4000;	/* Size of the circular buffer 0x4000 16K */
+static int buffersize = 0x4000;		/* Circular buffer size 0x4000 (16K) */
 static unsigned int numberofdevs = NUM_FO_DEVS;
-static int fo_major = 0;	/* major device number */
-/* Debuglvl controls whether a printk is executed
+static int fo_major = 0;		/* major device number */
+/* debuglevel controls whether a printk is executed
  * 0 = no printk at all
  * 1 = printk on error only
  * 2 = printk on errors and on init/remove
- * 3 = debug prink to trace calls into fanout
+ * 3 = debug printk to trace calls into fanout
  * 4 = debug trace inside of fanout calls 
  */
 static unsigned int debuglevel = DEBUGLEVEL;	/* printk verbosity */
@@ -66,9 +82,20 @@ static unsigned int debuglevel = DEBUGLEVEL;	/* printk verbosity */
 struct cdev fo_cdev;		/* a char device global just 1 */
 dev_t fo_devicenumber;		/* first device number */
 
+#ifdef DEV_MKNOD
+static struct class *fo_class;		/* fanout class */
+static mode_t nodemode = 0666;		/* special files permissions bits */
+					/* PARAM_DESC uses that value */
+/* forward declaration */
+static char *fo_dev_devnode(struct device *dev, umode_t *mode);
+#endif /* DEV_MKNOD */
+
 module_param(buffersize, int, S_IRUSR);
 module_param(debuglevel, int, S_IRUSR);
 module_param(numberofdevs, int, S_IRUSR);
+#ifdef DEV_MKNOD
+module_param(nodemode, int, S_IRUSR);
+#endif /* DEV_MKNOD */
 
 static struct fo *fo_devs;	/* point to devices (minors) */
 
@@ -93,6 +120,9 @@ MODULE_PARM_DESC(buffersize, "Size of each buffer. default=16384 (16K) ");
 MODULE_PARM_DESC(debuglevel, "Debug level. Higher=verbose. default=2");
 MODULE_PARM_DESC(numberofdevs,
 		 "Create this many minor devices. default=16");
+#ifdef DEV_MKNOD
+MODULE_PARM_DESC(nodemode, "Special files permission bits. default=0666");
+#endif /* DEV_MKNOD */
 
 
 int fanout_init_module(void)
@@ -132,6 +162,23 @@ int fanout_init_module(void)
 	cdev_init(&fo_cdev, &fanout_fops);	/* init dev structures */
 	kobject_set_name(&(fo_cdev.kobj), "%s%d", DEVNAME, fo_devicenumber);
 
+#ifdef DEV_MKNOD
+	fo_class = class_create(THIS_MODULE, DEVNAME);
+	if (IS_ERR(fo_class)) {
+		if (debuglevel >= 1)
+			printk(KERN_ALERT "%s: class_create fails.\n", DEVNAME);
+		cdev_del(&fo_cdev);		/* delete major device */
+		kfree(fo_devs);			/* free */
+		fo_devs = NULL;			/* reset pointer */
+		return PTR_ERR(fo_class);
+	}
+
+	/* limit permission bits */
+	nodemode &= 0666;
+	/* callback to set permission bits for the nodes we will create */
+	fo_class->devnode = fo_dev_devnode;
+#endif /* DEV_MKNOD */
+
 	err = cdev_add(&fo_cdev, fo_devicenumber, numberofdevs);
 	if (err < 0) {
 		if (debuglevel >= 1)
@@ -139,6 +186,22 @@ int fanout_init_module(void)
 					DEVNAME, err);
 		return err;
 	}
+
+#ifdef DEV_MKNOD
+	/* Create the special files and register with sysfs */
+	for (i = 0; i < numberofdevs; i++) {	/* for every minor device */
+		fo_devs[i].dev = device_create(fo_class, NULL,
+			MKDEV(fo_major, i), NULL, i == 0 ? "%s" : "%s%d",
+			DEVNAME, i);
+		if (IS_ERR(fo_devs[i].dev)) {
+			if (debuglevel >= 1)
+			 	printk(KERN_ALERT \
+					"%s%d: device_create fails. err=%ld.\n",
+					DEVNAME, i, PTR_ERR(fo_devs[i].dev));
+		}
+
+	}
+#endif /* DEV_MKNOD */
 
 	if (debuglevel >= 2) {
 		printk(KERN_INFO
@@ -157,6 +220,12 @@ void fanout_exit_module(void)
 		return;
 
 	for (i = 0; i < numberofdevs; i++) {	/* for every minor */
+
+#ifdef DEV_MKNOD
+		/* Delete the special file for this minor */
+		device_destroy(fo_class, MKDEV(fo_major, i));
+#endif /* DEV_MKNOD */
+
 		if (fo_devs[i].buf)
 			kfree(fo_devs[i].buf);	/* free alloced memory */
 	}
@@ -164,6 +233,11 @@ void fanout_exit_module(void)
 	cdev_del(&fo_cdev);		/* delete major device */
 	kfree(fo_devs);			/* free */
 	fo_devs = NULL;			/* reset pointer */
+
+#ifdef DEV_MKNOD
+	class_destroy(fo_class);
+#endif /* DEV_MKNOD */
+
 	unregister_chrdev_region(fo_devicenumber, numberofdevs);
 
 	if (debuglevel >= 2)
@@ -356,6 +430,18 @@ static unsigned int fanout_poll(struct file *filp, poll_table * ppt)
 
 	return ready_mask;
 }
+
+#ifdef DEV_MKNOD
+/* callback invoked when making the nodes */
+static char *fo_dev_devnode(struct device *dev, umode_t *mode)
+{
+	if (!mode)
+		return NULL;
+	if (MAJOR(dev->devt) == fo_major)
+		*mode = nodemode;
+	return kasprintf(GFP_KERNEL, "%s", dev_name(dev));
+}
+#endif /* DEV_MKNOD */
 
 module_init(fanout_init_module);
 module_exit(fanout_exit_module);

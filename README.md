@@ -8,7 +8,8 @@ Kernel-based publish-subscribe system
 
 
 ## WHY:
-- Twice as efficient:  Only N writes for N subscribers compared to 2* N writes for a sockets based system
+- Twice as efficient:  Only N writes for N subscribers compared to 2*N
+  writes for a sockets based system
 - Simple: Kernel based, no need for a new process or daemon
 - Simple: Use mknod to create a channel or topic as a device node
 - Simple: API is just open()/read()/write()/close()
@@ -28,35 +29,26 @@ Kernel-based publish-subscribe system
 
 
 ## TEST:
-    sudo modprobe fanout   # load the kernel module
-    
-    # Get fanout driver's major number to create device node
-    FANOUTMAJOR=`grep fanout /proc/devices | awk '{print $1}'`
-    sudo mknod /dev/fanouttest c $FANOUTMAJOR 0
-    sudo chmod 666 /dev/fanouttest
-    
+    sudo modprobe fanout   # load the kernel module, create 8 nodes
+    # rename one of the nodes for our use of it
+    sudo mv /dev/fanout7 /dev/fanouttest
     # Add three subscribers to the topic on /dev/fanouttest
     cat /dev/fanouttest &
     cat /dev/fanouttest &
     cat /dev/fanouttest &
-
     # Publish a messagte to fanouttest topic
-    
-    echo “Hello, World” > /dev/fanouttest
+    echo Hello, World > /dev/fanouttest
     
 
 ## NOTES:
 See http://linustoys.org for an article on fanout.
-
 See Linux Journal of August, 2010 for another article
-
 See also http://github.org/bob-linuxtoys/proxy
 
 
 
 ## COPYRIGHT
-
-Copyright 2010-2015, Bob Smith
+Copyright 2010-2021, Bob Smith, Frederic Roussel
 
 
 

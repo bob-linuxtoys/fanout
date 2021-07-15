@@ -15,3 +15,7 @@ install:
 	cp fanout.ko /lib/modules/$(shell uname -r)/kernel/drivers/char
 	depmod -a
 endif
+
+udev:
+	cp udev.d/fanout.rules /etc/udev/rules.d/90-fanout.rules
+	udevadm control --reload-rules
