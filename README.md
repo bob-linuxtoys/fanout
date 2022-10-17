@@ -8,7 +8,7 @@ Kernel-based publish-subscribe system
 
 
 ## WHY:
-- Twice as efficient:  Only N writes for N subscribers compared to 2*N
+- Efficient:  Only N writes for N subscribers compared to 2*N
   writes for a sockets based system
 - Simple: Kernel based, no need for a new process or daemon
 - Simple: Use mknod to create a channel or topic as a device node
@@ -21,6 +21,7 @@ Kernel-based publish-subscribe system
 
 
 ## INSTALLATION:
+    // comment out #define DEV_MKNOD if on Ubuntu 20.04.
     sudo apt-get install linux-headers-`uname -r`
     git clone --depth=1 https://github.com/bob-linuxtoys/fanout
     cd fanout
@@ -31,6 +32,7 @@ Kernel-based publish-subscribe system
 ## TEST:
     sudo modprobe fanout   # load the kernel module, create 8 nodes
     # rename one of the nodes for our use of it
+    # (or create /dev nodes manually if Ubuntu 20.04)
     sudo mv /dev/fanout7 /dev/fanouttest
     # Add three subscribers to the topic on /dev/fanouttest
     cat /dev/fanouttest &
